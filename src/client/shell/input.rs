@@ -78,6 +78,35 @@ fn push_host_theme_update(
 }
 
 impl ClientShellState {
+    /// Panes answer OSC 10/11 from the host theme the server holds, and the server pushes the
+    /// pane `CSI ? 997 n` as soon as it sees an appearance update. A host scheme switch reaches
+    /// the client before its new default colors do, because the client only re-queries OSC 10/11
+    /// after the switch. Once the host has answered OSC 11, the appearance waits for the next
+    /// background answer so a pane that queries OSC 11 on the push sees the new background.
+    fn forward_host_theme_update(
+        &mut self,
+        requests: &mut Vec<ClientMessage>,
+        update: crate::protocol::ClientHostThemeUpdate,
+    ) {
+        use crate::protocol::{ClientHostDefaultColorKind, ClientHostThemeUpdate};
+
+        match update {
+            ClientHostThemeUpdate::Appearance(_) if self.host_background.is_some() => {
+                self.pending_host_appearance_update = Some(update);
+            }
+            ClientHostThemeUpdate::DefaultColor {
+                kind: ClientHostDefaultColorKind::Background,
+                ..
+            } => {
+                push_host_theme_update(requests, update);
+                if let Some(appearance) = self.pending_host_appearance_update.take() {
+                    push_host_theme_update(requests, appearance);
+                }
+            }
+            update => push_host_theme_update(requests, update),
+        }
+    }
+
     pub(crate) fn host_keyboard_report_all_requested(&self) -> bool {
         matches!(
             self.mode,
@@ -167,7 +196,7 @@ impl ClientShellState {
                 continue;
             }
             if let Some(update) = host_theme_update(&event) {
-                push_host_theme_update(&mut outcome.requests, update);
+                self.forward_host_theme_update(&mut outcome.requests, update);
             }
             match event {
                 RawInputEvent::Key(key) => self.handle_key(key, &mut outcome),

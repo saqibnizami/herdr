@@ -803,11 +803,13 @@ impl HeadlessServer {
         if outer_terminal_focus == Some(true) {
             self.app.state.mark_active_tab_seen();
         }
+        // Theme first: the appearance step pushes `CSI ? 997 n`, and a pane that re-queries
+        // OSC 10/11 on that push must already see the new default colors.
+        self.app.set_host_terminal_theme(host_terminal_theme);
         self.app.set_host_terminal_appearance_state(
             host_terminal_appearance,
             host_terminal_appearance_explicit,
         );
-        self.app.set_host_terminal_theme(host_terminal_theme);
     }
 
     fn sync_visible_server_config_diagnostic(&mut self, uses_local_keybindings: bool) {
