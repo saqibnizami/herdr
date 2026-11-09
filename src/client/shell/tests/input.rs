@@ -44,14 +44,7 @@ fn host_appearance_prefers_explicit_reports_over_background_inference() {
     )]);
     assert!(explicit.repaint);
     assert!(explicit.query_host_theme);
-    assert!(matches!(
-        explicit.requests.as_slice(),
-        [ClientMessage::ClientShellHostTheme {
-            update: crate::protocol::ClientHostThemeUpdate::Appearance(
-                crate::protocol::ClientHostAppearance::Dark
-            )
-        }]
-    ));
+    assert!(explicit.requests.is_empty());
     assert_eq!(
         state.host_appearance,
         Some(crate::terminal_theme::HostAppearance::Dark)
@@ -68,12 +61,100 @@ fn host_appearance_prefers_explicit_reports_over_background_inference() {
         },
     }]);
     assert!(!ignored.repaint);
-    assert_eq!(ignored.requests.len(), 1);
+    assert!(matches!(
+        ignored.requests.as_slice(),
+        [
+            ClientMessage::ClientShellHostTheme {
+                update: crate::protocol::ClientHostThemeUpdate::DefaultColor { .. }
+            },
+            ClientMessage::ClientShellHostTheme {
+                update: crate::protocol::ClientHostThemeUpdate::Appearance(
+                    crate::protocol::ClientHostAppearance::Dark
+                )
+            }
+        ]
+    ));
     assert_eq!(
         state.host_appearance,
         Some(crate::terminal_theme::HostAppearance::Dark)
     );
     assert_eq!(state.config.palette, dark);
+}
+
+#[test]
+fn host_scheme_change_is_sent_after_the_requeried_background() {
+    use crate::protocol::{
+        ClientHostAppearance, ClientHostDefaultColorKind, ClientHostThemeUpdate,
+    };
+
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let light_background = crate::terminal_theme::RgbColor {
+        r: 0xef,
+        g: 0xf1,
+        b: 0xf5,
+    };
+    let dark_background = crate::terminal_theme::RgbColor {
+        r: 0x30,
+        g: 0x34,
+        b: 0x46,
+    };
+    state.handle_raw_events(vec![RawInputEvent::HostDefaultColor {
+        kind: crate::terminal_theme::DefaultColorKind::Background,
+        color: light_background,
+    }]);
+
+    let scheme = state.handle_raw_events(vec![RawInputEvent::HostColorSchemeChanged(
+        crate::terminal_theme::HostAppearance::Dark,
+    )]);
+    assert!(scheme.query_host_theme);
+    assert!(
+        scheme.requests.is_empty(),
+        "the appearance must wait for the host's new background, got {} requests",
+        scheme.requests.len()
+    );
+
+    let background = state.handle_raw_events(vec![RawInputEvent::HostDefaultColor {
+        kind: crate::terminal_theme::DefaultColorKind::Background,
+        color: dark_background,
+    }]);
+    assert!(matches!(
+        background.requests.as_slice(),
+        [
+            ClientMessage::ClientShellHostTheme {
+                update: ClientHostThemeUpdate::DefaultColor {
+                    kind: ClientHostDefaultColorKind::Background,
+                    ..
+                }
+            },
+            ClientMessage::ClientShellHostTheme {
+                update: ClientHostThemeUpdate::Appearance(ClientHostAppearance::Dark)
+            }
+        ]
+    ));
+
+    let later = state.handle_raw_events(vec![RawInputEvent::HostDefaultColor {
+        kind: crate::terminal_theme::DefaultColorKind::Background,
+        color: dark_background,
+    }]);
+    assert_eq!(later.requests.len(), 1);
+}
+
+#[test]
+fn host_scheme_change_is_sent_at_once_before_any_background_is_known() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+
+    let scheme = state.handle_raw_events(vec![RawInputEvent::HostColorSchemeChanged(
+        crate::terminal_theme::HostAppearance::Dark,
+    )]);
+
+    assert!(matches!(
+        scheme.requests.as_slice(),
+        [ClientMessage::ClientShellHostTheme {
+            update: crate::protocol::ClientHostThemeUpdate::Appearance(
+                crate::protocol::ClientHostAppearance::Dark
+            )
+        }]
+    ));
 }
 
 #[test]
